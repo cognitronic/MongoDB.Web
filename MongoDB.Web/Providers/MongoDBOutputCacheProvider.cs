@@ -12,6 +12,11 @@ namespace MongoDB.Web.Providers
     {
         private MongoCollection mongoCollection;
 
+        public MongoDBOutputCacheProvider(string name, NameValueCollection config)
+        {
+            this.Initialize(name, config);
+        }
+
         public override object Add(string key, object entry, DateTime utcExpiry)
         {
             this.Set(key, entry, utcExpiry);
