@@ -23,7 +23,30 @@ namespace MongoDB.Web.Providers
 
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
         {
-            throw new NotImplementedException();
+            var memoryStream = new MemoryStream();
+
+            using (var binaryWriter = new BinaryWriter(memoryStream))
+            {
+                var query = Query.And(Query.EQ("applicationVirtualPath", HostingEnvironment.ApplicationVirtualPath), Query.EQ("id", id));
+                this.mongoCollection.Remove(query);
+
+                var bsonDocument = new BsonDocument
+                    {
+                        { "applicationVirtualPath", HostingEnvironment.ApplicationVirtualPath },
+                        { "created", DateTime.Now },
+                        { "expires", DateTime.Now.AddMinutes(1400) },
+                        { "id", id },
+                        { "lockDate", DateTime.Now },
+                        { "locked", false },
+                        { "lockId", 0 },
+                        { "sessionStateActions", SessionStateActions.None },
+                        { "sessionStateItems", memoryStream.ToArray() },
+                        { "sessionStateItemsCount", 0 },
+                        { "timeout", 20 }
+                    };
+
+                this.mongoCollection.Insert(bsonDocument);
+            }
         }
 
         public override void Dispose()
@@ -128,11 +151,12 @@ namespace MongoDB.Web.Providers
 
         private SessionStateStoreData GetSessionStateStoreData(bool exclusive, HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
+            SessionStateStoreData item = null;
             actions = SessionStateActions.None;
             lockAge = TimeSpan.Zero;
             locked = false;
             lockId = null;
-
+            
             var query = Query.And(Query.EQ("applicationVirtualPath", HostingEnvironment.ApplicationVirtualPath), Query.EQ("id", id));
             var bsonDocument = this.mongoCollection.FindOneAs<BsonDocument>(query);
 
@@ -158,7 +182,7 @@ namespace MongoDB.Web.Providers
                 actions = (SessionStateActions)bsonDocument["sessionStateActions"].AsInt32;
             }
 
-            if (exclusive)
+            if (exclusive && bsonDocument != null)
             {
                 lockId = (int)lockId + 1;
                 actions = SessionStateActions.None;
@@ -171,19 +195,22 @@ namespace MongoDB.Web.Providers
             {
                 return this.CreateNewStoreData(context, this.sessionStateSection.Timeout.Minutes);
             }
-
-            using (var memoryStream = new MemoryStream(bsonDocument["sessionStateItems"].AsByteArray))
+            if (bsonDocument != null)
             {
-                var sessionStateItems = new SessionStateItemCollection();
-
-                if (memoryStream.Length > 0)
+                using (var memoryStream = new MemoryStream(bsonDocument["sessionStateItems"].AsByteArray))
                 {
-                    var binaryReader = new BinaryReader(memoryStream);
-                    sessionStateItems = SessionStateItemCollection.Deserialize(binaryReader);
-                }
+                    var sessionStateItems = new SessionStateItemCollection();
 
-                return new SessionStateStoreData(sessionStateItems, SessionStateUtility.GetSessionStaticObjects(context), bsonDocument["timeout"].AsInt32);
+                    if (memoryStream.Length > 0)
+                    {
+                        var binaryReader = new BinaryReader(memoryStream);
+                        sessionStateItems = SessionStateItemCollection.Deserialize(binaryReader);
+                    }
+
+                    return new SessionStateStoreData(sessionStateItems, SessionStateUtility.GetSessionStaticObjects(context), bsonDocument["timeout"].AsInt32);
+                }
             }
+            return null;
         }
 
         #endregion
